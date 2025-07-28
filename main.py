@@ -1,20 +1,36 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from dotenv import load_dotenv
-import os
+import langchain_helper as lch
+import streamlit as st
+import time
 
-load_dotenv()
-Google_Api_key = os.getenv("Google_Api_Key")
+st.title("Pet Name Generator")
 
-def generate_pet_name():
-    llm = ChatGoogleGenerativeAI(
-        google_api_key = Google_Api_key,
-        model="gemini-1.5-flash",
-        temperature = 0.2,
-    )               
+pet_type = st.text_input("Enter the type of pet (e.g., cat, dog):")
+number_of_names = 5
 
-    name = llm.invoke("i have a pet dog, can you generate me 7 cool superhero  names for it ?")
+style = st.text_input("Enter the style of names (e.g., elegant, funny):")
 
-    return name.content
+spinner_words = ["Analyzing prompt...", "AI enhancing...", "Reading resources...", "Generating names..."]
 
-if __name__ == "__main__":
-    print(generate_pet_name())    
+if st.button("Generate Names"):
+    if pet_type and style:
+        spinner_placeholder = st.empty()
+        for word in spinner_words:
+            with st.spinner(word):
+                spinner_placeholder.info(word)
+                time.sleep(0.7)
+        spinner_placeholder.empty()
+        try:
+            names = lch.generate_pet_name(pet_type, number_of_names, style)
+            if isinstance(names, list):
+                st.markdown("**Generated Names:**")
+                for name in names:
+                    st.write(f"- {name}")
+            else:
+                # If names is a string, split by comma or newline
+                st.markdown("**Generated Names:**")
+                for name in str(names).replace('\n', ',').split(','):
+                    st.write(f"- {name.strip()}")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+    else:
+        st.error("Please fill in all fields.")
