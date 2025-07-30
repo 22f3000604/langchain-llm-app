@@ -1,52 +1,73 @@
+from langchain_community.document_loaders import YoutubeLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain.schema import Document
 from langchain.chains import LLMChain
-from langchain_community.agent_toolkits.load_tools import load_tools
-from langchain.agents import initialize_agent, AgentType
-
+from langchain.prompts import PromptTemplate
+from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
 import os
+from pydantic import BaseModel
+from youtube_transcript_api import YouTubeTranscriptApi
+import asyncio
+
+try:
+    # Check if a running event loop exists
+    asyncio.get_running_loop()
+except RuntimeError:
+    # No event loop, so create and set one
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-def generate_pet_name(pet_type, number_of_names, style):
-    llm = ChatGoogleGenerativeAI(
-        google_api_key = GOOGLE_API_KEY,
-        model="gemini-1.5-flash",
-        temperature = 1.2,
-    )               
+embeddings = GoogleGenerativeAIEmbeddings(google_api_key = GOOGLE_API_KEY,model="gemini-embedding-001")
 
+def Create_vector_db_from_youtube(video_url: str) -> FAISS:
+    # Extract video id
+    video_id = video_url.split("v=")[-1].split("&")[0]
+
+    api = YouTubeTranscriptApi()
+    transcript_obj = api.fetch(video_id)
+    full_text = " ".join([entry.text for entry in transcript_obj])
+
+    # Wrap text as a LangChain Document
+    transcript = [Document(page_content=full_text)]
+
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    docs = text_splitter.split_documents(transcript)
+
+    db = FAISS.from_documents(docs, embeddings)
+    return db
+
+def get_response_from_vector_db(query,db,k=2):
+
+    docs = db.similarity_search(query,k=k)
+    docs_page_content = " ".join([doc.page_content for doc in docs])
+    llm = ChatGoogleGenerativeAI(google_api_key=GOOGLE_API_KEY,model="gemini-2.5-pro")
     prompt_template = PromptTemplate(
-    input_variables = ["pet_type", "number_of_names", "style"],
-    template = "i have a pet {pet_type}, can you generate me {number_of_names}  {style}  names for it ?"
-    )
+        input_variables=["context", "query"],
+        template="""
+        Answer the question based on the context below:
 
-     # Modern way: use prompt | llm
-    chain = prompt_template | llm
+        Context: {context}
+
+        Question: {query}
+
+        Answer:
+        """
+    )
+    chain = LLMChain(llm=llm,prompt=prompt_template)
     response = chain.invoke({
-        "pet_type": pet_type,
-        "number_of_names": number_of_names,
-        "style": style
+        "context": docs_page_content,
+        "query": query
     })
-
-    return response.content
-
-def langchain_agent():
-    llm = ChatGoogleGenerativeAI(temperature = 0.9,google_api_key = GOOGLE_API_KEY,model="gemini-1.5-flash")
-    tools = load_tools(["wikipedia","llm-math","google-search"], llm=llm)
-    agent = initialize_agent(
-        tools=tools,
-        llm=llm,
-        agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-        verbose=True
-    )
-
-    result = agent.run("what is average age of dog. multilply it by 2")
     
-    print(result)
+    response_text = response.get("text", "")
+    response = response.replace("\n", " ")
+    return response
 
-
-if __name__ == "__main__":
-    langchain_agent()
-    #print(generate_pet_name("cat", 5, "elegant"))
