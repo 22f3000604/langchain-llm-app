@@ -54,7 +54,7 @@ def fetch_with_timeout(api, video_id, timeout_seconds=30):
             return None
 
 # Usage in your function
-def Create_vector_db_from_youtube(video_url: str, proxy_list=None, timeout=30) -> FAISS:
+def Create_vector_db_from_youtube(video_url: str, proxy_list=None, timeout=60) -> FAISS:
     video_id = video_url.split("v=")[-1].split("&")[0]
 
     api = YouTubeTranscriptApi()
