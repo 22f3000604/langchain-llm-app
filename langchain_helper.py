@@ -43,12 +43,12 @@ def load_proxies(proxy_file_path: str):
     return proxies
 
 
-def Create_vector_db_from_youtube(video_url: str, proxy_list=None) -> FAISS:
+def Create_vector_db_from_youtube(video_url: str, proxy_list=None,timeout = 30) -> FAISS:
     # Extract video id
     video_id = video_url.split("v=")[-1].split("&")[0]
 
     # Select a proxy if proxy list provided
-    api_args = {}
+    api_args = {"timeout":timeout}
     if proxy_list:
         proxy_url = random.choice(proxy_list)
         scheme = proxy_url.split("://")[0]
