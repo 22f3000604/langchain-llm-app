@@ -12,6 +12,7 @@ import os
 from pydantic import BaseModel
 from youtube_transcript_api import YouTubeTranscriptApi
 import asyncio
+import random
 
 try:
     # Check if a running event loop exists
@@ -21,18 +22,44 @@ except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-embeddings = GoogleGenerativeAIEmbeddings(google_api_key = GOOGLE_API_KEY,model="gemini-embedding-001")
+embeddings = GoogleGenerativeAIEmbeddings(google_api_key=GOOGLE_API_KEY, model="gemini-embedding-001")
 
-def Create_vector_db_from_youtube(video_url: str) -> FAISS:
+
+def load_proxies(proxy_file_path: str):
+    """
+    Load proxies from a CSV or text file, one proxy per line, in format:
+    http://ip:port
+    socks4://ip:port
+    """
+    if not os.path.exists(proxy_file_path):
+        print(f"Proxy file {proxy_file_path} not found. Running without proxies.")
+        return []
+
+    with open(proxy_file_path, "r") as f:
+        proxies = [line.strip() for line in f.readlines() if line.strip()]
+    return proxies
+
+
+def Create_vector_db_from_youtube(video_url: str, proxy_list=None) -> FAISS:
     # Extract video id
     video_id = video_url.split("v=")[-1].split("&")[0]
 
+    # Select a proxy if proxy list provided
+    api_args = {}
+    if proxy_list:
+        proxy_url = random.choice(proxy_list)
+        scheme = proxy_url.split("://")[0]
+        proxies = {scheme: proxy_url}
+        api_args["proxies"] = proxies
+        print(f"Using proxy: {proxy_url}")
+
     api = YouTubeTranscriptApi()
-    transcript_obj = api.fetch(video_id)
+
+    # Fetch transcript with proxy if any
+    transcript_obj = api.fetch(video_id, **api_args)
     full_text = " ".join([entry.text for entry in transcript_obj])
 
     # Wrap text as a LangChain Document
@@ -44,11 +71,11 @@ def Create_vector_db_from_youtube(video_url: str) -> FAISS:
     db = FAISS.from_documents(docs, embeddings)
     return db
 
-def get_response_from_vector_db(query,db,k=2):
 
-    docs = db.similarity_search(query,k=k)
+def get_response_from_vector_db(query, db, k=2):
+    docs = db.similarity_search(query, k=k)
     docs_page_content = " ".join([doc.page_content for doc in docs])
-    llm = ChatGoogleGenerativeAI(google_api_key=GOOGLE_API_KEY,model="gemini-2.5-pro")
+    llm = ChatGoogleGenerativeAI(google_api_key=GOOGLE_API_KEY, model="gemini-2.5-pro")
     prompt_template = PromptTemplate(
         input_variables=["context", "query"],
         template="""
@@ -61,13 +88,20 @@ def get_response_from_vector_db(query,db,k=2):
         Answer:
         """
     )
-    chain = LLMChain(llm=llm,prompt=prompt_template)
+    chain = LLMChain(llm=llm, prompt=prompt_template)
     response = chain.invoke({
         "context": docs_page_content,
         "query": query
     })
-    
-    response_text = response.get("text", "")
-    response = response.replace("\n", " ")
-    return response
 
+    response_text = response.get("text", "")
+    response_text = response_text.replace("\n", " ")
+    return response_text
+
+
+# Usage example:
+# Load proxies from a local file 'proxies.txt' (one proxy URL per line like http://ip:port or socks4://ip:port)
+proxies = load_proxies('proxies.txt')
+
+# Create vector db with proxies enabled (if list empty, runs without proxy)
+# db = Create_vector_db_from_youtube("https://www.youtube.com/watch?v=VIDEO_ID", proxy_list=proxies)
