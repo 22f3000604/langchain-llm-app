@@ -41,33 +41,34 @@ def load_proxies(proxy_file_path: str):
     with open(proxy_file_path, "r") as f:
         proxies = [line.strip() for line in f.readlines() if line.strip()]
     return proxies
+import concurrent.futures
 
+def fetch_with_timeout(api, video_id, timeout_seconds=30):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(api.fetch, video_id)
+        try:
+            result = future.result(timeout=timeout_seconds)
+            return result
+        except concurrent.futures.TimeoutError:
+            print(f"Fetching transcript timed out after {timeout_seconds} seconds")
+            return None
 
-def Create_vector_db_from_youtube(video_url: str, proxy_list=None,timeout = 30) -> FAISS:
-    # Extract video id
+# Usage in your function
+def Create_vector_db_from_youtube(video_url: str, proxy_list=None, timeout=30) -> FAISS:
     video_id = video_url.split("v=")[-1].split("&")[0]
-
-    # Select a proxy if proxy list provided
-    api_args = {"timeout":timeout}
-    if proxy_list:
-        proxy_url = random.choice(proxy_list)
-        scheme = proxy_url.split("://")[0]
-        proxies = {scheme: proxy_url}
-        api_args["proxies"] = proxies
-        print(f"Using proxy: {proxy_url}")
 
     api = YouTubeTranscriptApi()
 
-    # Fetch transcript with proxy if any
-    transcript_obj = api.fetch(video_id, **api_args)
+    # Use the timeout wrapper
+    transcript_obj = fetch_with_timeout(api, video_id, timeout_seconds=timeout)
+    if not transcript_obj:
+        raise TimeoutError(f"Fetching transcript for video {video_id} timed out")
+
     full_text = " ".join([entry.text for entry in transcript_obj])
 
-    # Wrap text as a LangChain Document
     transcript = [Document(page_content=full_text)]
-
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs = text_splitter.split_documents(transcript)
-
     db = FAISS.from_documents(docs, embeddings)
     return db
 
